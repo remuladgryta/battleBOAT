@@ -1,0 +1,236 @@
+<html>
+<head>
+<meta charset="UTF-8"/>
+<link rel="shortcut icon" type="image/png" href="https://veekun.com/dex/media/pokemon/icons/211.png"/>
+<script src="https://unpkg.com/peerjs@1.0.4/dist/peerjs.min.js"></script>
+<title>battleBOAT</title>
+<style>
+    .ownBoat{
+        background:blue;
+    }
+    .miss{
+        background:black;
+    }
+    .hit{
+        background:orange;
+    }
+    .sunk{
+        background:red;
+    }
+</style>
+</head>
+<body>
+Opponent's board: 
+<div id="opponentBoard"></div>
+Your board:
+<div id="ownBoard"></div>
+<div id="boatsPane" style="display:grid; grid-template-columns: 1fr 1fr 1fr;"></div>
+<hr/>
+<div id="settings_pane">
+<label>Columns: <input id="columns" type="number" min="1"/></label>
+<label>Pokémon: <input id="pokemon" type="text" title="Comma separated list of either specific dex numbers or dex number ranges. E.g. 1-3,152-154,64,128"/></label>
+<label>BOATs: <input id="boats" type="number" min="1"/></label>
+</div>
+<hr/>
+<div id="connectPane">
+    <div><button id="joinbutton">Join</button><input id="jointext" type="text"/></div>
+    <div>Your id is:<input id="peerID" readonly/></div>
+</div>
+<script>
+(function(){'use strict';
+    var settings = {
+        columns: 21,
+        pokemon: "1-251",
+        boats: 5,
+    };
+    let peer = new Peer();
+    let activeConnection = null;
+    peer.on('open', function(peerID){
+        document.querySelector("#peerID").value=peerID;
+    });
+    peer.on('connection', function(conn){
+        onConnection(conn);
+        conn.on('open', function(){
+            conn.send({type:'settings', settings});
+        });
+    });
+    
+    function onConnection(conn){
+        console.log("Connected");
+        activeConnection = conn;
+        conn.on('open', function(){
+            document.querySelector("#connectPane").hidden = true;
+        });
+        conn.on('close', function(){
+            document.querySelector("#connectPane").hidden = false;
+        });
+        conn.on('error', function(){
+            document.querySelector("#connectPane").hidden = false;
+        });
+        conn.on('data', function(data){
+            console.log(data);
+            let tile;
+            switch(data.type){
+                case "settings":
+                    onSettings(data.settings);
+                    console.log("recieved settings", settings);
+                    break;
+                case "shoot":
+                    tile = document.querySelector('#ownBoard img[data-mon="'+ data.id +'"]');
+                    
+                    if(tile.classList.contains('ownBoat')){
+                        tile.classList.add('hit');
+                        conn.send({type:'hit', id:data.id});
+                        for(let boatText of document.querySelectorAll('.boatText')){
+                            let boatArr = JSON.parse(boatText.value);
+                            if(boatArr.length && boatArr.every(function(id){
+                                let tile = document.querySelector('#ownBoard img[data-mon="'+ id +'"]');
+                                return tile.classList.contains('hit') && !tile.classList.contains('sunk');
+                            })){
+                                conn.send({type:'sink', ids:boatArr});
+                                for(let id of boatArr){
+                                    let tile = document.querySelector('#ownBoard img[data-mon="'+ id +'"]');
+                                    tile.classList.add('sunk');
+                                }
+                            }
+                        }
+                    }else{
+                        tile.classList.add('miss');
+                        conn.send({type:'miss', id:data.id});
+                    }
+                    break;
+                case "hit":
+                case "miss":
+                    tile = document.querySelector('#opponentBoard img[data-mon="'+ data.id +'"]');
+                    tile.classList.add(data.type);
+                    break;
+                case "sink":
+                    for(let id of data.ids){
+                        tile = document.querySelector('#opponentBoard img[data-mon="'+ id +'"]');
+                        tile.classList.add('sunk');
+                    }
+                    break;
+                default:
+                    conn.close();
+            }
+        });
+    }
+    
+    function onJoin(){
+        onConnection(peer.connect(document.querySelector('#jointext').value));
+    }
+    
+    function setupBoards(){
+        let tokens = settings.pokemon.split(',');
+        let pokemon = [];
+        for(let token of tokens){
+            if(token.includes("-")){
+                let [start, end] = token.split('-');
+                start = parseInt(start);
+                end = parseInt(end);
+                for(let i=start; i<=end; i++){
+                    pokemon.push(i);
+                }
+            }else{
+                pokemon.push(parseInt(token));
+            }
+        }
+        
+        function setupBoard(board){
+            while(board.firstChild){
+                board.removeChild(board.firstChild);
+            }
+            board.style = "display: grid; grid-template-columns: repeat(" + settings.columns + ", 38px);";
+            for(let mon of pokemon){
+                let tile = document.createElement('img');
+                tile.src = "https://veekun.com/dex/media/pokemon/icons/" + mon + ".png";
+                tile.setAttribute('data-mon', mon);
+                board.appendChild(tile);
+            }
+        }
+        let ownBoard = document.querySelector('#ownBoard');
+        let opponentBoard = document.querySelector('#opponentBoard');
+
+        setupBoard(ownBoard);
+        setupBoard(opponentBoard);
+    }
+    
+    function setupBoats(){
+        let boatsPane = document.querySelector("#boatsPane");
+        while(boatsPane.firstChild){
+            boatsPane.removeChild(boatsPane.firstChild);
+        }
+        for(let i=1; i<=settings.boats; i++){
+            boatsPane.innerHTML += (
+                '<div><input type="radio" checked="true" name="boat" id="boat'+i+'" class="boatRadio"/>' +
+                '<label for="boat'+i+'">BOAT '+i+' </label>' +
+                '<input type="text" id="boatIDs'+i+'" value="[]" class="boatText"/></div>'
+            );
+        }
+        
+    }
+    
+    let suppressSettingEvents = false;
+    function onSettings(newSettings){
+        Object.assign(settings, newSettings);
+        suppressSettingEvents = true;
+        for(let key in settings){
+            document.querySelector("#"+key).value = settings[key];
+        }
+        suppressSettingEvents = false;
+        
+        setupBoards();
+        setupBoats();
+    }
+    
+    function onSettingsEvent(e){
+        if(!suppressSettingEvents){//only react to events triggered by user input
+            let newSettings = {};
+            newSettings[e.target.id] = e.target.value;
+            onSettings(newSettings);
+            try{
+                activeConnection.send({type:"settings", settings:newSettings});
+            }catch(ex){
+                if(ex instanceof TypeError){
+                
+                }else{
+                    throw ex;
+                }
+            }
+        }
+    }
+    
+    function onOwnBoardEvent(e){
+        if(e.target.tagName == 'IMG'){
+            let tile = e.target;
+            if (tile.classList.contains("ownBoat")){
+                let boatText = document.querySelector('#boatIDs'+tile.getAttribute('data-boat'));
+                let boatArr = JSON.parse(boatText.value);
+                boatArr.splice(boatArr.indexOf(tile.getAttribute('data-mon')),1);
+                boatText.value = JSON.stringify(boatArr);
+                tile.removeAttribute('data-boat');
+            }else{
+                let selectedBoatText = document.querySelector('input[name="boat"]:checked ~ input');
+                let selectedBoatArr = JSON.parse(selectedBoatText.value);
+                tile.setAttribute('data-boat', selectedBoatText.id.split("boatIDs").pop());
+                selectedBoatArr.push(tile.getAttribute('data-mon'));
+                selectedBoatText.value = JSON.stringify(selectedBoatArr);
+            }
+            tile.classList.toggle('ownBoat');
+        }
+    }
+
+    function onOpponentBoardEvent(e){
+        if(e.target.tagName == 'IMG'){
+            activeConnection.send({type:'shoot', id:e.target.getAttribute('data-mon')});
+        }
+    }
+    onSettings(settings);
+    document.querySelector('#ownBoard').addEventListener('click', onOwnBoardEvent);
+    document.querySelector('#opponentBoard').addEventListener('click', onOpponentBoardEvent);
+    document.querySelector('#joinbutton').addEventListener('click', onJoin);
+    document.querySelector('#settings_pane').addEventListener('change', onSettingsEvent);
+})()
+</script>
+</body>
+</html>
