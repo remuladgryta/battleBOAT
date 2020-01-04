@@ -126,18 +126,22 @@ Your board:
     }
     
     function setupBoards(){
-        let tokens = settings.pokemon.split(',');
+        let tokens = settings.pokemon.split(',').filter(token => token.length > 0);
         let pokemon = [];
         for(let token of tokens){
+            let start, end;
             if(token.includes("-")){
-                let [start, end] = token.split('-');
+                [start, end] = token.split('-');
                 start = parseInt(start);
                 end = parseInt(end);
-                for(let i=start; i<=end; i++){
-                    pokemon.push(i);
-                }
             }else{
-                pokemon.push(parseInt(token));
+                start = end = parseInt(token);
+            }
+            if(!(0 < start && start < 808 && 0 < end && end < 808)){
+                start = end = 569;
+            }
+            for(let i=start; i<=end; i++){
+                pokemon.push(i);
             }
         }
         
