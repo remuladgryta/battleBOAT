@@ -73,8 +73,12 @@ Your board:
             let tile;
             switch(data.type){
                 case "settings":
-                    onSettings(data.settings);
-                    console.log("recieved settings", settings);
+                    if(JSON.stringify(data.settings) !== JSON.stringify(settings)){
+                        //only update settings if they differ from the ones we already have.
+                        //avoids needlessly resetting the board.
+                        onSettings(data.settings);
+                    }
+                    console.log("recieved settings", data.settings);
                     break;
                 case "shoot":
                     tile = document.querySelector('#ownBoard img[data-mon="'+ data.id +'"]');
