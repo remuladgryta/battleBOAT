@@ -148,7 +148,8 @@ Your board:
             board.style = "display: grid; grid-template-columns: repeat(" + settings.columns + ", 38px);";
             for(let mon of pokemon){
                 let tile = document.createElement('img');
-                tile.src = "https://veekun.com/dex/media/pokemon/icons/" + mon + ".png";
+                tile.src = "empty.png";
+                tile.style = `background-image: url(pokes.png); background-position: 0 -${(mon-1)*30}px; width:40px; height:30px; `;
                 tile.setAttribute('data-mon', mon);
                 board.appendChild(tile);
             }
