@@ -9,13 +9,13 @@
     .ownBoat{
         background:blue;
     }
-    .miss{
+    .miss,img[data-clicks="1"]{
         background:black;
     }
-    .hit{
+    .hit,img[data-clicks="2"]{
         background:orange;
     }
-    .sunk{
+    .sunk,img[data-clicks="3"]{
         background:red;
     }
 </style>
@@ -31,6 +31,7 @@ Your board:
 <label>Columns: <input id="columns" type="number" min="1"/></label>
 <label>Pokémon: <input id="pokemon" type="text" title="Comma separated list of either specific dex numbers or dex number ranges. E.g. 1-3,152-154,64,128"/></label>
 <label>BOATs: <input id="boats" type="number" min="1"/></label>
+<label>Manual confirmation: <input id="manual" type="checkbox"/></label>
 </div>
 <hr/>
 <div id="connectPane">
@@ -43,6 +44,7 @@ Your board:
         columns: 21,
         pokemon: "1-251",
         boats: 5,
+        manual: false,
     };
     let peer = new Peer();
     let activeConnection = null;
@@ -69,6 +71,7 @@ Your board:
             document.querySelector("#connectPane").hidden = false;
         });
         conn.on('data', function(data){
+            //If you are reading this, I'm sorry. This code is awful.
             console.log(data);
             let tile;
             switch(data.type){
@@ -85,24 +88,30 @@ Your board:
                     
                     if(tile.classList.contains('ownBoat')){
                         tile.classList.add('hit');
-                        conn.send({type:'hit', id:data.id});
-                        for(let boatText of document.querySelectorAll('.boatText')){
-                            let boatArr = JSON.parse(boatText.value);
-                            if(boatArr.length && boatArr.every(function(id){
-                                let tile = document.querySelector('#ownBoard img[data-mon="'+ id +'"]');
-                                return tile.classList.contains('hit') && !tile.classList.contains('sunk');
-                            })){
-                                conn.send({type:'sink', ids:boatArr});
-                                for(let id of boatArr){
-                                    let tile = document.querySelector('#ownBoard img[data-mon="'+ id +'"]');
-                                    tile.classList.add('sunk');
+                        if(!settings.manual){
+                            conn.send({type:'hit', id:data.id});
+                            for(let boatText of document.querySelectorAll('.boatText')){
+                                let boatArr = JSON.parse(boatText.value);
+                                if(shouldSink(boatArr)){
+                                    conn.send({type:'sink', ids:boatArr});
+                                    for(let id of boatArr){
+                                        let tile = document.querySelector('#ownBoard img[data-mon="'+ id +'"]');
+                                        tile.classList.add('sunk');
+                                    }
                                 }
                             }
                         }
                     }else{
                         tile.classList.add('miss');
-                        conn.send({type:'miss', id:data.id});
+                        if(!settings.manual){
+                            conn.send({type:'miss', id:data.id});
+                        }
                     }
+                    break;
+                case "unshoot":
+                    tile = document.querySelector('#ownBoard img[data-mon="'+ data.id +'"]');
+                    tile.classList.remove('hit');
+                    tile.classList.remove('miss');
                     break;
                 case "hit":
                 case "miss":
@@ -155,6 +164,7 @@ Your board:
                 tile.src = "empty.png";
                 tile.style = `background-image: url(pokes.png); background-position: 0 -${(mon-1)*30}px; width:40px; height:30px; `;
                 tile.setAttribute('data-mon', mon);
+                tile.setAttribute('data-clicks', 0);
                 board.appendChild(tile);
             }
         }
@@ -179,13 +189,27 @@ Your board:
         }
         
     }
-    
+
+    function shouldSink(boatArr){
+        return boatArr.length && boatArr.every(
+            function(id){
+                let tile = document.querySelector('#ownBoard img[data-mon="'+ id +'"]');
+                return tile.classList.contains('hit') && !tile.classList.contains('sunk');
+            });
+    }
+
     let suppressSettingEvents = false;
     function onSettings(newSettings){
         Object.assign(settings, newSettings);
         suppressSettingEvents = true;
         for(let key in settings){
-            document.querySelector("#"+key).value = settings[key];
+            let input = document.querySelector("#"+key);
+            if(input.type.toUpperCase() == "CHECKBOX"){
+                input.checked = settings[key];
+            }
+            else{
+                input.value = settings[key];
+            }
         }
         suppressSettingEvents = false;
         
@@ -196,7 +220,11 @@ Your board:
     function onSettingsEvent(e){
         if(!suppressSettingEvents){//only react to events triggered by user input
             let newSettings = {};
-            newSettings[e.target.id] = e.target.value;
+            if(e.target.type.toUpperCase() == "CHECKBOX"){
+                newSettings[e.target.id] = e.target.checked;
+            }else{
+                newSettings[e.target.id] = e.target.value;
+            }
             onSettings(newSettings);
             try{
                 activeConnection.send({type:"settings", settings:newSettings});
@@ -232,12 +260,29 @@ Your board:
 
     function onOpponentBoardEvent(e){
         if(e.target.tagName == 'IMG'){
-            activeConnection.send({type:'shoot', id:e.target.getAttribute('data-mon')});
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if(e.button == 0){//left click
+                activeConnection.send({type:'shoot', id:e.target.getAttribute('data-mon')});
+                if(settings.manual){
+                    e.target.setAttribute('data-clicks', Math.min(parseInt(e.target.getAttribute('data-clicks')) + 1, 3));
+                }
+            }else if(e.button == 2){//right click
+                if(settings.manual){
+                    e.target.setAttribute('data-clicks', Math.max(parseInt(e.target.getAttribute('data-clicks')) - 1, 0));
+                    if(e.target.getAttribute('data-clicks') == 0){
+                        activeConnection.send({type:'unshoot', id:e.target.getAttribute('data-mon')});
+                    }
+                }else{
+                    activeConnection.send({type:'unshoot', id:e.target.getAttribute('data-mon')});
+                }
+            }
         }
     }
     onSettings(settings);
     document.querySelector('#ownBoard').addEventListener('click', onOwnBoardEvent);
-    document.querySelector('#opponentBoard').addEventListener('click', onOpponentBoardEvent);
+    document.querySelector('#opponentBoard').addEventListener('mouseup', onOpponentBoardEvent);
+    document.querySelector('#opponentBoard').addEventListener('contextmenu', e => e.preventDefault());
     document.querySelector('#joinbutton').addEventListener('click', onJoin);
     document.querySelector('#settings_pane').addEventListener('change', onSettingsEvent);
 })()
